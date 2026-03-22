@@ -1,0 +1,11 @@
+webhook:
+  # Port on which the embedded HTTP server listens for incoming webhooks.
+  port: 8080
+
+  # URL path that accepts webhook POST requests (e.g. POST http://host:8080/webhook).
+  path: /webhook
+
+  # Optional shared secret used to authenticate webhook requests.
+  # When non-empty, every request must include an "X-Secret" header that matches
+  # this value.  Leave blank ("") to disable authentication.
+  secret: ""
