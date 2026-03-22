@@ -2,6 +2,7 @@ package com.mcsets.plugin;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.mockito.Mockito;
 
 import java.util.List;
@@ -18,11 +19,18 @@ import static org.junit.jupiter.api.Assertions.*;
 class WebhookHandlerTest {
 
     private WebhookHandler handler;
+    private McSetsPlugin mockPlugin;
+    private FileConfiguration mockConfig;
 
     @BeforeEach
     void setUp() {
-        McSetsPlugin mockPlugin = Mockito.mock(McSetsPlugin.class);
+        mockPlugin = Mockito.mock(McSetsPlugin.class);
+        mockConfig = Mockito.mock(FileConfiguration.class);
         Mockito.when(mockPlugin.getLogger()).thenReturn(Logger.getLogger("test"));
+        Mockito.when(mockPlugin.getConfig()).thenReturn(mockConfig);
+        Mockito.when(mockConfig.getStringList("webhook.textPayload.commands")).thenReturn(List.of());
+        Mockito.when(mockConfig.getString("webhook.textPayload.command", "")).thenReturn("");
+        Mockito.when(mockConfig.getMapList("webhook.textPayload.rules")).thenReturn(List.of());
         handler = new WebhookHandler(mockPlugin, "");
     }
 
@@ -107,4 +115,77 @@ class WebhookHandlerTest {
         assertThrows(IllegalArgumentException.class,
                 () -> handler.parseCommands("[\"say hello\"]"));
     }
+
+    // ── plain-text purchase payload support ─────────────────────────────────
+
+    @Test
+    void parsePlainTextPayloadWithDefaultTemplate() {
+        String body = "SkyFrameSMP - Purchase Completed\n"
+                + "Player: TrainBoy888\n"
+                + "Package(s): Bronze Rank\n"
+                + "Amount: £0.00\n"
+                + "Currency: GBP\n"
+                + "Payment ID: free_123";
+
+        List<String> cmds = handler.parseCommands(body);
+        assertEquals(1, cmds.size());
+        assertEquals("say Purchase completed for TrainBoy888: Bronze Rank (£0.00 GBP)", cmds.get(0));
+    }
+
+    @Test
+    void parsePlainTextPayloadWithConfiguredTemplate() {
+        Mockito.when(mockConfig.getStringList("webhook.textPayload.commands"))
+                .thenReturn(List.of("say {player}", "say {packages}", "say {payment_id}"));
+
+        String body = "Store - Purchase Completed\n"
+                + "Player: TrainBoy888\n"
+                + "Package(s): Bronze Rank\n"
+                + "Payment ID: free_350b0ffb";
+
+        List<String> cmds = handler.parseCommands(body);
+        assertEquals(3, cmds.size());
+        assertEquals("say TrainBoy888", cmds.get(0));
+        assertEquals("say Bronze Rank", cmds.get(1));
+        assertEquals("say free_350b0ffb", cmds.get(2));
+    }
+
+        @Test
+        void parsePlainTextPayloadUsesMatchingRules() {
+        Mockito.when(mockConfig.getMapList("webhook.textPayload.rules")).thenReturn(List.of(
+            java.util.Map.of(
+                "when", java.util.Map.of("packages_contains", "Bronze"),
+                "commands", List.of("say matched {player}", "say {packages}")
+            )
+        ));
+
+        String body = "Store - Purchase Completed\n"
+            + "Player: TrainBoy888\n"
+            + "Package(s): Bronze Rank\n"
+            + "Payment ID: free_350b0ffb";
+
+        List<String> cmds = handler.parseCommands(body);
+        assertEquals(2, cmds.size());
+        assertEquals("say matched TrainBoy888", cmds.get(0));
+        assertEquals("say Bronze Rank", cmds.get(1));
+        }
+
+        @Test
+        void parsePlainTextPayloadFallsBackWhenRulesDoNotMatch() {
+        Mockito.when(mockConfig.getMapList("webhook.textPayload.rules")).thenReturn(List.of(
+            java.util.Map.of(
+                "when", java.util.Map.of("packages_contains", "Gold"),
+                "commands", List.of("say should not run")
+            )
+        ));
+
+        String body = "Store - Purchase Completed\n"
+            + "Player: TrainBoy888\n"
+            + "Package(s): Bronze Rank\n"
+            + "Amount: £0.00\n"
+            + "Currency: GBP";
+
+        List<String> cmds = handler.parseCommands(body);
+        assertEquals(1, cmds.size());
+        assertEquals("say Purchase completed for TrainBoy888: Bronze Rank (£0.00 GBP)", cmds.get(0));
+        }
 }

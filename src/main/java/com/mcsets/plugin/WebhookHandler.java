@@ -14,7 +14,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.logging.Logger;
 
 /**
@@ -37,11 +41,17 @@ public class WebhookHandler implements HttpHandler {
 
     private final McSetsPlugin plugin;
     private final String secret;
+    private final boolean debugMode;
     private final Logger logger;
 
     public WebhookHandler(McSetsPlugin plugin, String secret) {
+        this(plugin, secret, false);
+    }
+
+    public WebhookHandler(McSetsPlugin plugin, String secret, boolean debugMode) {
         this.plugin = plugin;
         this.secret = secret == null ? "" : secret;
+        this.debugMode = debugMode;
         this.logger = plugin.getLogger();
     }
 
@@ -63,17 +73,23 @@ public class WebhookHandler implements HttpHandler {
         }
 
         // Read request body.
-        String body;
+        String rawBody;
         try (InputStream is = exchange.getRequestBody()) {
-            body = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
+            rawBody = new String(is.readAllBytes(), StandardCharsets.UTF_8);
         }
+
+        if (debugMode) {
+            logger.info("Webhook raw request body: " + rawBody);
+        }
+
+        String body = rawBody.trim();
 
         if (body.isEmpty()) {
             sendResponse(exchange, 400, "Bad Request: empty body");
             return;
         }
 
-        // Parse JSON and extract command(s).
+        // Parse payload and extract command(s).
         List<String> commands;
         try {
             commands = parseCommands(body);
@@ -102,20 +118,26 @@ public class WebhookHandler implements HttpHandler {
     }
 
     /**
-     * Parses the JSON payload and returns the list of commands to execute.
+     * Parses the payload and returns the list of commands to execute.
      *
-     * @param json raw JSON string from the request body.
+     * <p>Accepted formats:</p>
+     * <ul>
+     *   <li>JSON object with "command" or "commands" keys.</li>
+     *   <li>Plain text purchase payload in key/value lines, such as:
+     *       {@code Player: Name} and {@code Package(s): Rank}.</li>
+     * </ul>
+     *
+     * @param payload raw request body.
      * @return non-null list of command strings (may be empty).
-     * @throws IllegalArgumentException if the body is not valid JSON, is not a JSON object,
-     *                                  neither "command" nor "commands" keys are present,
-     *                                  or a value has an unexpected type.
+     * @throws IllegalArgumentException if the payload cannot be interpreted,
+     *                                  or values have unexpected types.
      */
-    List<String> parseCommands(String json) {
+    List<String> parseCommands(String payload) {
         JsonElement root;
         try {
-            root = JsonParser.parseString(json);
+            root = JsonParser.parseString(payload);
         } catch (JsonSyntaxException e) {
-            throw new IllegalArgumentException("invalid JSON: " + e.getMessage(), e);
+            return parseCommandsFromPlainTextPayload(payload);
         }
 
         if (!root.isJsonObject()) {
@@ -148,6 +170,182 @@ public class WebhookHandler implements HttpHandler {
         }
 
         return result;
+    }
+
+    private List<String> parseCommandsFromPlainTextPayload(String payload) {
+        Map<String, String> fields = extractPlainTextFields(payload);
+        if (fields.isEmpty()) {
+            throw new IllegalArgumentException("invalid payload: expected JSON command(s) or key/value purchase data");
+        }
+
+        List<String> templates = resolveRuleTemplates(fields);
+        if (templates.isEmpty()) {
+            templates = new ArrayList<>(plugin.getConfig().getStringList("webhook.textPayload.commands"));
+            String singleTemplate = plugin.getConfig().getString("webhook.textPayload.command", "").trim();
+            if (!singleTemplate.isEmpty()) {
+                templates.add(singleTemplate);
+            }
+        }
+
+        if (templates.isEmpty()) {
+            templates.add("say Purchase completed for {player}: {packages} ({amount} {currency})");
+        }
+
+        List<String> commands = new ArrayList<>();
+        for (String template : templates) {
+            String expanded = applyTemplate(template, fields).trim();
+            if (!expanded.isEmpty()) {
+                commands.add(expanded);
+            }
+        }
+
+        if (debugMode) {
+            logger.info("Extracted webhook fields: " + fields);
+        }
+
+        return commands;
+    }
+
+    private List<String> resolveRuleTemplates(Map<String, String> fields) {
+        List<String> templates = new ArrayList<>();
+        List<Map<?, ?>> rules = plugin.getConfig().getMapList("webhook.textPayload.rules");
+
+        for (Map<?, ?> rule : rules) {
+            Map<?, ?> when = asMap(rule.get("when"));
+            if (!when.isEmpty() && !matchesAllConditions(fields, when)) {
+                continue;
+            }
+
+            templates.addAll(toStringList(rule.get("commands")));
+
+            Object single = rule.get("command");
+            if (single instanceof String singleCommand && !singleCommand.trim().isEmpty()) {
+                templates.add(singleCommand);
+            }
+        }
+
+        return templates;
+    }
+
+    private boolean matchesAllConditions(Map<String, String> fields, Map<?, ?> conditions) {
+        for (Map.Entry<?, ?> condition : conditions.entrySet()) {
+            String rawKey = String.valueOf(condition.getKey()).trim();
+            String expected = String.valueOf(condition.getValue()).trim();
+            if (rawKey.isEmpty()) {
+                continue;
+            }
+
+            if (rawKey.endsWith("_contains")) {
+                String fieldKey = normalizeFieldKey(rawKey.substring(0, rawKey.length() - "_contains".length()));
+                String actual = fields.get(fieldKey);
+                if (actual == null || !actual.toLowerCase().contains(expected.toLowerCase())) {
+                    return false;
+                }
+                continue;
+            }
+
+            if (rawKey.endsWith("_regex")) {
+                String fieldKey = normalizeFieldKey(rawKey.substring(0, rawKey.length() - "_regex".length()));
+                String actual = fields.get(fieldKey);
+                if (actual == null) {
+                    return false;
+                }
+                try {
+                    if (!Pattern.compile(expected, Pattern.CASE_INSENSITIVE).matcher(actual).find()) {
+                        return false;
+                    }
+                } catch (PatternSyntaxException e) {
+                    logger.warning("Invalid webhook rule regex for key \"" + rawKey + "\": " + expected);
+                    return false;
+                }
+                continue;
+            }
+
+            String fieldKey = normalizeFieldKey(rawKey);
+            String actual = fields.get(fieldKey);
+            if (actual == null || !actual.equalsIgnoreCase(expected)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private Map<?, ?> asMap(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            return map;
+        }
+        return Map.of();
+    }
+
+    private List<String> toStringList(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+
+        List<String> out = new ArrayList<>();
+        for (Object entry : list) {
+            if (entry == null) {
+                continue;
+            }
+            String asString = String.valueOf(entry).trim();
+            if (!asString.isEmpty()) {
+                out.add(asString);
+            }
+        }
+        return out;
+    }
+
+    Map<String, String> extractPlainTextFields(String payload) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        String[] lines = payload.split("\\r?\\n");
+
+        String title = "";
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty()) {
+                title = trimmed;
+                break;
+            }
+        }
+        if (!title.isEmpty()) {
+            fields.put("title", title);
+        }
+
+        for (String line : lines) {
+            int separator = line.indexOf(':');
+            if (separator <= 0) {
+                continue;
+            }
+
+            String rawKey = line.substring(0, separator).trim();
+            String value = line.substring(separator + 1).trim();
+            if (rawKey.isEmpty()) {
+                continue;
+            }
+
+            String normalizedKey = normalizeFieldKey(rawKey);
+            fields.put(normalizedKey, value);
+        }
+
+        return fields;
+    }
+
+    private String normalizeFieldKey(String key) {
+        String normalized = key.toLowerCase()
+                .replace("(", "")
+                .replace(")", "")
+                .replace(" ", "_")
+                .replace("-", "_");
+        return normalized;
+    }
+
+    private String applyTemplate(String template, Map<String, String> fields) {
+        String out = template;
+        for (Map.Entry<String, String> entry : fields.entrySet()) {
+            out = out.replace("{" + entry.getKey() + "}", entry.getValue());
+        }
+        return out;
     }
 
     private void sendResponse(HttpExchange exchange, int statusCode, String message) throws IOException {

@@ -9,3 +9,102 @@ webhook:
   # When non-empty, every request must include an "X-Secret" header that matches
   # this value.  Leave blank ("") to disable authentication.
   secret: ""
+
+  # When enabled, logs each raw request body before JSON parsing.
+  # Warning: this may expose sensitive command payloads in your server logs.
+  debug: true
+
+  # Optional plain-text payload support (for purchase webhooks sent as text lines).
+  # Supports placeholders from extracted fields, e.g.:
+  # {title}, {player}, {packages}, {gross}, {net}, {amount}, {currency}, {payment_id}, {gift}
+  textPayload:
+    # Default commands used when no rule matches.
+    commands:
+      - "say Purchase completed for {player}: {packages} ({amount} {currency})"
+
+    # Optional conditional rules. All matching rules are applied in order.
+    # Condition keys support:
+    # - <field>: exact (case-insensitive)
+    # - <field>_contains: contains (case-insensitive)
+    # - <field>_regex: regex (case-insensitive)
+    rules:
+      - when:
+          packages_contains: "Bronze"
+        commands:
+          - "lp user {player} parent set bronze"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "Iron"
+        commands:
+          - "lp user {player} parent set iron"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "Mithril"
+        commands:
+          - "lp user {player} parent set mithril"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "Obsidian"
+        commands: 
+          - "lp user {player} parent set obsidian"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "Mythic"
+        commands:
+          - "lp user {player} parent set mythic"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "Tier 1"
+        commands:
+          - "pcrate giveKey tier1 {player} 1"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "Tier 2"
+        commands:
+          - "pcrate giveKey tier2 {player} 1"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "Tier 3"
+        commands:
+          - "pcrate giveKey tier3 {player} 1"
+          - "say Thanks {player} for purchasing {packages}!" 
+      - when:
+          packages_contains: "Winter"
+        commands:
+          - "pcrate giveKey winter {player} 1"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "P2W"
+        commands:
+          - "lp user {player} setsuffix &e&lP2W&r"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "$$$"
+        commands:
+          - "lp user {player} setsuffix &9&l$$$"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "Rich"
+        commands:
+          - "lp user {player} setsuffix &2&lRich"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "࿊"
+        commands:
+          - "lp user {player} setsuffix &d&l࿊"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "Bronze » Iron"
+        commands:
+          - "lp user {player} parent set iron"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when:
+          packages_contains: "Iron » Mithril"
+        commands:
+          - "lp user {player} parent set mithril"
+          - "say Thanks {player} for purchasing {packages}!"
+      - when: 
+          packages_contains: "Mithril » Obsidian"
+        commands:
+          - "lp user {player} parent set obsidian"
+          - "say Thanks {player} for purchasing {packages}!"

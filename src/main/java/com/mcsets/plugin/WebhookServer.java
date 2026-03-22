@@ -17,16 +17,18 @@ public class WebhookServer {
     private final int port;
     private final String path;
     private final String secret;
+    private final boolean debugMode;
 
     private HttpServer httpServer;
     private ExecutorService executor;
     private boolean running;
 
-    public WebhookServer(McSetsPlugin plugin, int port, String path, String secret) {
+    public WebhookServer(McSetsPlugin plugin, int port, String path, String secret, boolean debugMode) {
         this.plugin = plugin;
         this.port = port;
         this.path = path.startsWith("/") ? path : "/" + path;
         this.secret = secret == null ? "" : secret;
+        this.debugMode = debugMode;
     }
 
     /**
@@ -37,7 +39,7 @@ public class WebhookServer {
     public void start() throws IOException {
         executor = Executors.newCachedThreadPool();
         httpServer = HttpServer.create(new InetSocketAddress(port), 0);
-        httpServer.createContext(this.path, new WebhookHandler(plugin, secret));
+        httpServer.createContext(this.path, new WebhookHandler(plugin, secret, debugMode));
         httpServer.setExecutor(executor);
         httpServer.start();
         running = true;

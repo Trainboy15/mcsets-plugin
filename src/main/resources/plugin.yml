@@ -1,7 +1,7 @@
 name: McSetsPlugin
 version: '${project.version}'
 main: com.mcsets.plugin.McSetsPlugin
-api-version: '1.20'
+api-version: '1.18'
 description: Receives webhooks and executes Minecraft commands.
 authors: [Trainboy15]
 
@@ -9,6 +9,10 @@ commands:
   mcsets:
     description: McSets plugin management commands.
     usage: /mcsets <reload|status>
+    permission: mcsets.admin
+  reload:
+    description: Reloads the McSets webhook server configuration.
+    usage: /reload
     permission: mcsets.admin
 
 permissions:

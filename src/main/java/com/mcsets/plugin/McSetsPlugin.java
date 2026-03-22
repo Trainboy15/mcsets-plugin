@@ -19,16 +19,27 @@ public final class McSetsPlugin extends JavaPlugin {
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        restartWebhookServer();
+    }
+
+    private void restartWebhookServer() {
+        if (webhookServer != null) {
+            webhookServer.stop();
+        }
 
         int port = getConfig().getInt("webhook.port", 8080);
         String path = getConfig().getString("webhook.path", "/webhook");
         String secret = getConfig().getString("webhook.secret", "");
+        boolean debugMode = getConfig().getBoolean("webhook.debug", false);
 
-        webhookServer = new WebhookServer(this, port, path, secret);
+        webhookServer = new WebhookServer(this, port, path, secret, debugMode);
 
         try {
             webhookServer.start();
             getLogger().info("Webhook server started on port " + port + " (path: " + path + ").");
+            if (debugMode) {
+                getLogger().info("Webhook debug mode is enabled; raw request bodies will be logged.");
+            }
         } catch (Exception e) {
             getLogger().severe("Failed to start webhook server: " + e.getMessage());
         }
@@ -44,12 +55,23 @@ public final class McSetsPlugin extends JavaPlugin {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!command.getName().equalsIgnoreCase("mcsets")) {
+        String commandName = command.getName();
+        boolean isMcsetsCommand = commandName.equalsIgnoreCase("mcsets");
+        boolean isReloadCommand = commandName.equalsIgnoreCase("reload");
+
+        if (!isMcsetsCommand && !isReloadCommand) {
             return false;
         }
 
         if (!sender.hasPermission("mcsets.admin")) {
             sender.sendMessage("§cYou do not have permission to use this command.");
+            return true;
+        }
+
+        if (isReloadCommand) {
+            reloadConfig();
+            restartWebhookServer();
+            sender.sendMessage("§aMcSets webhook config reloaded.");
             return true;
         }
 
@@ -60,21 +82,9 @@ public final class McSetsPlugin extends JavaPlugin {
 
         switch (args[0].toLowerCase()) {
             case "reload" -> {
-                if (webhookServer != null) {
-                    webhookServer.stop();
-                }
                 reloadConfig();
-                int port = getConfig().getInt("webhook.port", 8080);
-                String path = getConfig().getString("webhook.path", "/webhook");
-                String secret = getConfig().getString("webhook.secret", "");
-                webhookServer = new WebhookServer(this, port, path, secret);
-                try {
-                    webhookServer.start();
-                    sender.sendMessage("§aWebhook server reloaded and listening on port " + port + ".");
-                } catch (Exception e) {
-                    sender.sendMessage("§cFailed to restart webhook server: " + e.getMessage());
-                    getLogger().severe("Failed to restart webhook server: " + e.getMessage());
-                }
+                restartWebhookServer();
+                sender.sendMessage("§aWebhook server reloaded.");
             }
             case "status" -> {
                 boolean running = webhookServer != null && webhookServer.isRunning();
